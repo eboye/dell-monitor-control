@@ -4,6 +4,7 @@ import { run } from './harness.js';
 
 // Import test modules for their side effect of registering tests.
 import './monitor.test.js';
+import './ddcutil.test.js';
 
 const loop = GLib.MainLoop.new(null, false);
 let exitCode = 0;
