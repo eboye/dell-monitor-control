@@ -9,14 +9,50 @@ Built for and tested with a **Dell P3421W** on Arch Linux / GNOME 50 / Wayland.
 
 ## Requirements
 
-- GNOME Shell 50+
-- `ddcutil` on `PATH`, working without `sudo`:
-  ```bash
-  sudo pacman -S ddcutil
-  # log out/in so the i2c udev rule + group membership apply
-  ddcutil detect          # should list your monitor
-  ```
-- DDC/CI enabled in the monitor's OSD (Menu → Others → DDC/CI → On).
+- **GNOME Shell 45+** (built and tested on 50).
+- **`ddcutil`** installed and usable without `sudo` (see below).
+- **DDC/CI enabled** in the monitor's on-screen menu (e.g. Menu → Others →
+  DDC/CI → On).
+
+### 1. Install ddcutil
+
+| Distro | Command |
+| --- | --- |
+| Arch / Manjaro / EndeavourOS | `sudo pacman -S ddcutil` |
+| Debian / Ubuntu / Pop!_OS / Mint | `sudo apt install ddcutil` |
+| Fedora / RHEL / CentOS Stream | `sudo dnf install ddcutil` |
+| openSUSE (Leap / Tumbleweed) | `sudo zypper install ddcutil` |
+| Gentoo | `sudo emerge app-misc/ddcutil` |
+
+### 2. Grant i2c access (so it works without sudo)
+
+ddcutil talks to the monitor over the i2c bus, which needs the `i2c-dev` kernel
+module loaded and your user in the `i2c` group:
+
+```bash
+# Load i2c-dev now, and automatically on every boot
+sudo modprobe i2c-dev
+echo i2c-dev | sudo tee /etc/modules-load.d/i2c-dev.conf
+
+# Add yourself to the i2c group. The ddcutil package ships the udev rule that
+# assigns /dev/i2c-* to this group; some distros create the group on install.
+sudo usermod -aG i2c "$USER"
+```
+
+Then **log out and back in** (or reboot) so the group membership and udev rule
+take effect, and verify:
+
+```bash
+ddcutil detect          # should list your monitor
+```
+
+If `ddcutil detect` sees your monitor but reports *"DDC communication failed"*,
+enable **DDC/CI** in the monitor's on-screen menu and try again.
+
+> **Note:** on Debian/Ubuntu the `i2c` group and udev rule come from the
+> `ddcutil` (or `i2c-tools`) package. If `/dev/i2c-*` still shows as
+> `root:root` after re-login, reinstall `ddcutil` so its udev rule is applied,
+> or check `ls -l /dev/i2c-*`.
 
 ## Install
 

@@ -24,6 +24,20 @@ warn() { printf '%b warn:%b %s\n' "$c_yellow" "$c_reset" "$*" >&2; }
 err()  { printf '%berror:%b %s\n' "$c_red" "$c_reset" "$*" >&2; }
 note() { printf '%b      %s%b\n' "$c_dim" "$*" "$c_reset"; }
 
+# Best-effort package-manager hint for installing ddcutil, based on /etc/os-release.
+ddcutil_install_hint() {
+    local osinfo=""
+    osinfo="$(grep -Ei '^(ID|ID_LIKE)=' /etc/os-release 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    case " $osinfo " in
+        *arch*|*manjaro*)         echo "sudo pacman -S ddcutil" ;;
+        *debian*|*ubuntu*|*mint*) echo "sudo apt install ddcutil" ;;
+        *fedora*|*rhel*|*centos*) echo "sudo dnf install ddcutil" ;;
+        *suse*)                   echo "sudo zypper install ddcutil" ;;
+        *gentoo*)                 echo "sudo emerge app-misc/ddcutil" ;;
+        *)                        echo "install 'ddcutil' with your package manager" ;;
+    esac
+}
+
 uninstall() {
     if [ -L "$DEST" ]; then
         warn "$DEST is a dev symlink; removing the link only (your clone is untouched)."
@@ -58,12 +72,12 @@ fi
 if command -v ddcutil >/dev/null 2>&1; then
     if ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx i2c; then
         warn "You are not in the 'i2c' group; ddcutil will need sudo until you are."
-        note "Fix: install ddcutil's udev rule (comes with the package) and log out/in."
+        note "Fix: sudo usermod -aG i2c \"\$USER\"   (then log out and back in)"
     fi
 else
-    warn "ddcutil not found on PATH. Install it, e.g.:"
-    note "Arch: sudo pacman -S ddcutil   |   Debian/Ubuntu: sudo apt install ddcutil"
-    note "Then log out/in so the i2c group + udev rule apply."
+    warn "ddcutil not found on PATH. Install it:"
+    note "$(ddcutil_install_hint)"
+    note "Then: sudo modprobe i2c-dev && sudo usermod -aG i2c \"\$USER\", and log out/in."
 fi
 
 # --- Locate the source: local clone next to this script, else clone remote. --
