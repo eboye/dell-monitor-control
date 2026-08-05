@@ -1,7 +1,6 @@
 // ddcutil service. Parsers are pure; the service class spawns async subprocesses.
 
 import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
 import { VCP } from './monitor.js';
 
 // --- Pure parsers -----------------------------------------------------------
@@ -74,7 +73,7 @@ export class Ddcutil {
 
     // Serialize every hardware call through a single promise chain.
     _enqueue(job) {
-        const run = this._queue.then(job, job);
+        const run = this._queue.then(job);
         // Keep the chain alive even if a job rejects.
         this._queue = run.catch(() => {});
         return run;

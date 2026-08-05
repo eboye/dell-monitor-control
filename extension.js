@@ -45,6 +45,11 @@ class Indicator extends PanelMenu.Button {
         this.menu.removeAll();
 
         if (!this._model.available) {
+            if (this._model.error === null) {
+                const detecting = new PopupMenu.PopupMenuItem('Detecting monitor…', { reactive: false });
+                this.menu.addMenuItem(detecting);
+                return;
+            }
             const item = new PopupMenu.PopupMenuItem(this._errorText(), { reactive: false });
             this.menu.addMenuItem(item);
             const retry = new PopupMenu.PopupMenuItem('Retry');
@@ -65,11 +70,11 @@ class Indicator extends PanelMenu.Button {
 
         // --- Brightness slider ---
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Brightness'));
-        this._brightnessSlider = this._addSlider(VCP.BRIGHTNESS, 'brightness');
+        this._brightnessSlider = this._addSlider(VCP.BRIGHTNESS);
 
         // --- Contrast slider ---
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Contrast'));
-        this._contrastSlider = this._addSlider(VCP.CONTRAST, 'contrast');
+        this._contrastSlider = this._addSlider(VCP.CONTRAST);
 
         // --- Color preset submenu ---
         const presetMenu = new PopupMenu.PopupSubMenuMenuItem('Color preset');
@@ -105,7 +110,7 @@ class Indicator extends PanelMenu.Button {
         this.menu.addMenuItem(refresh);
     }
 
-    _addSlider(code, key) {
+    _addSlider(code) {
         const item = new PopupMenu.PopupBaseMenuItem({ activate: false });
         const slider = new Slider.Slider(0);
         // Apply only when the drag interaction settles.
