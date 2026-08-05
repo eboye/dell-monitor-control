@@ -1,0 +1,5 @@
+/* Give sliders room inside the popup menu. */
+.popup-menu-item .slider {
+    width: 220px;
+    margin: 0 8px;
+}
