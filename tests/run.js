@@ -3,7 +3,7 @@ import system from 'system';
 import { run } from './harness.js';
 
 // Import test modules for their side effect of registering tests.
-import './harness.test.js';
+import './monitor.test.js';
 
 const loop = GLib.MainLoop.new(null, false);
 let exitCode = 0;
