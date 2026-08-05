@@ -1,11 +1,11 @@
 import GObject from 'gi://GObject';
 import St from 'gi://St';
-import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as Slider from 'resource:///org/gnome/shell/ui/slider.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 import { Ddcutil } from './ddcutil.js';
@@ -23,6 +23,7 @@ class Indicator extends PanelMenu.Button {
         this._model = createModel();
         this._powerConfirm = false;
         this._powerTimeoutId = 0;
+        this._scrollApplyId = 0;
 
         this.add_child(new St.Icon({
             icon_name: 'video-display-symbolic',
@@ -40,6 +41,7 @@ class Indicator extends PanelMenu.Button {
     }
 
     _buildMenu() {
+        this._resetPower();
         this.menu.removeAll();
 
         if (!this._model.available) {
@@ -105,10 +107,19 @@ class Indicator extends PanelMenu.Button {
 
     _addSlider(code, key) {
         const item = new PopupMenu.PopupBaseMenuItem({ activate: false });
-        const slider = new imports.ui.slider.Slider(0);
-        // Apply only when the drag/scroll interaction settles.
+        const slider = new Slider.Slider(0);
+        // Apply only when the drag interaction settles.
         slider.connect('drag-end', () => this._applySlider(code, slider));
-        slider.connect('scroll-event', () => {});
+        // Apply after scroll updates the value; defer to idle so slider.value is current.
+        slider.connect('scroll-event', () => {
+            if (this._scrollApplyId)
+                return;
+            this._scrollApplyId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this._scrollApplyId = 0;
+                this._applySlider(code, slider);
+                return GLib.SOURCE_REMOVE;
+            });
+        });
         item.add_child(slider);
         this.menu.addMenuItem(item);
         return slider;
@@ -216,6 +227,10 @@ class Indicator extends PanelMenu.Button {
         if (this._powerTimeoutId) {
             GLib.Source.remove(this._powerTimeoutId);
             this._powerTimeoutId = 0;
+        }
+        if (this._scrollApplyId) {
+            GLib.Source.remove(this._scrollApplyId);
+            this._scrollApplyId = 0;
         }
         super.destroy();
     }
