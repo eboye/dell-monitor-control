@@ -1,0 +1,27 @@
+name: Release
+
+# Build the extension zip and attach it to a GitHub Release whenever a
+# version tag (v1, v2, ...) is pushed.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build extension zip
+        run: |
+          bash scripts/pack.sh "dell-monitor-control@eboye.github.shell-extension.zip"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dell-monitor-control@eboye.github.shell-extension.zip
+          generate_release_notes: true

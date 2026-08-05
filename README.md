@@ -20,6 +20,36 @@ Built for and tested with a **Dell P3421W** on Arch Linux / GNOME 50 / Wayland.
 
 ## Install
 
+### One-liner (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/eboye/dell-monitor-control/main/install.sh | bash
+```
+
+This checks your dependencies (GNOME version, `ddcutil`, `i2c` group), copies
+the extension into `~/.local/share/gnome-shell/extensions/`, and enables it.
+Re-run it to update. **On Wayland you must log out and back in** for GNOME to
+load the extension, then:
+
+```bash
+gnome-extensions enable dell-monitor-control@eboye.github
+```
+
+Uninstall with `curl ... | bash -s -- --uninstall` (or `./install.sh --uninstall`
+from a clone).
+
+### From a release zip
+
+Download the latest `*.shell-extension.zip` from the
+[Releases page](https://github.com/eboye/dell-monitor-control/releases), then:
+
+```bash
+gnome-extensions install --force dell-monitor-control@eboye.github.shell-extension.zip
+# log out/in (Wayland), then enable as above
+```
+
+### From a clone (development)
+
 ```bash
 git clone https://github.com/eboye/dell-monitor-control ~/GitHub/dell-monitor-control
 UUID=dell-monitor-control@eboye.github
@@ -27,6 +57,9 @@ ln -sfn ~/GitHub/dell-monitor-control ~/.local/share/gnome-shell/extensions/$UUI
 # Log out and back in (Wayland), then:
 gnome-extensions enable $UUID
 ```
+
+Editing a linked clone updates the extension live (after a shell reload) — no
+reinstall needed.
 
 ## Usage
 
@@ -47,3 +80,8 @@ gjs -m tests/run.js
 ```
 
 The UI (`extension.js`) is verified in a live GNOME session.
+
+Build a distributable zip locally with `scripts/pack.sh`. Pushing a `v*` tag
+(e.g. `git tag v1 && git push origin v1`) triggers the GitHub Actions workflow
+in `.github/workflows/release.yml`, which builds the zip and attaches it to a
+new Release automatically.
