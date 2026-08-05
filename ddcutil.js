@@ -6,14 +6,43 @@ import { VCP } from './monitor.js';
 // --- Pure parsers -----------------------------------------------------------
 
 export function parseDetect(text) {
-    const busMatch = text.match(/I2C bus:\s*\/dev\/i2c-(\d+)/);
-    if (!busMatch)
-        return null;
-    const bus = parseInt(busMatch[1], 10);
+    // `ddcutil detect` output is a sequence of blocks. Each block starts with
+    // an unindented header line ("Display 1", "Invalid display", ...) followed
+    // by indented fields. Parsing the whole text at once would let an earlier
+    // "Invalid display" block (e.g. a laptop's internal eDP panel, which can't
+    // do DDC/CI) shadow the real monitor's bus. So parse block by block and
+    // keep only real "Display N" blocks.
+    const blocks = [];
+    let current = null;
+    for (const line of text.split('\n')) {
+        if (/^\S/.test(line)) {
+            current = { header: line.trim(), body: [] };
+            blocks.push(current);
+        } else if (current) {
+            current.body.push(line);
+        }
+    }
 
-    const monMatch = text.match(/Monitor:\s*[^:\n]*:([^:\n]*):/);
-    const model = monMatch ? monMatch[1].trim() : '';
-    return { bus, model };
+    const displays = [];
+    for (const block of blocks) {
+        if (!/^Display\s+\d+$/.test(block.header))
+            continue;
+        const body = block.body.join('\n');
+        const busMatch = body.match(/I2C bus:\s*\/dev\/i2c-(\d+)/);
+        if (!busMatch)
+            continue;
+        const bus = parseInt(busMatch[1], 10);
+        const monMatch = body.match(/Monitor:\s*([^:\n]*):([^:\n]*):/);
+        const mfg = monMatch ? monMatch[1].trim() : '';
+        const model = monMatch ? monMatch[2].trim() : '';
+        displays.push({ bus, mfg, model });
+    }
+
+    if (displays.length === 0)
+        return null;
+    // Prefer a Dell (mfg "DEL") when more than one valid display is present.
+    const chosen = displays.find(d => d.mfg === 'DEL') ?? displays[0];
+    return { bus: chosen.bus, model: chosen.model };
 }
 
 export function parseGetvcp(text) {
@@ -24,11 +53,19 @@ export function parseGetvcp(text) {
     const type = m[1];
     const rest = m[2].trim().split(/\s+/);
     if (type === 'C') {
-        return { type: 'C', current: parseInt(rest[0], 10), max: parseInt(rest[1], 10) };
+        const current = parseInt(rest[0], 10);
+        const max = parseInt(rest[1], 10);
+        // A zero-exit "ERR"/malformed reply must not put NaN onto the sliders.
+        if (!Number.isFinite(current) || !Number.isFinite(max))
+            return null;
+        return { type: 'C', current, max };
     }
     // Non-continuous: value like "x0f".
     const hex = rest[0].replace(/^x/i, '');
-    return { type, value: parseInt(hex, 16) };
+    const value = parseInt(hex, 16);
+    if (!Number.isFinite(value))
+        return null;
+    return { type, value };
 }
 
 // --- Async service -----------------------------------------------------------
