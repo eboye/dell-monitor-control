@@ -2,8 +2,7 @@
   "uuid": "dell-monitor-control@eboye.github",
   "name": "Dell Monitor Control",
   "description": "Control a DDC/CI Dell monitor (input source, brightness, contrast, color preset, display mode, power) from the top bar via ddcutil.",
-  "shell-version": ["50"],
-  "version": 2,
-  "settings-schema": null,
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 3,
   "url": "https://github.com/eboye/dell-monitor-control"
 }

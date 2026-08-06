@@ -1,5 +1,5 @@
 import { test, assertDeepEqual, assertEqual } from './harness.js';
-import { parseDetect, parseGetvcp } from '../ddcutil.js';
+import { parseDetect, parseGetvcp, parseGetvcpLines } from '../ddcutil.js';
 
 const DETECT = `Display 1
    I2C bus:          /dev/i2c-6
@@ -61,6 +61,28 @@ test('parseGetvcp returns null on ERR (non-finite value)', () => {
     assertEqual(parseGetvcp('VCP 10 C x y'), null);
 });
 
+// Multi-code getvcp: one "VCP <code> ..." line per requested feature.
+const MULTI = `VCP 10 C 100 100
+VCP 12 C 75 100
+VCP 14 SNC x05
+VCP 60 SNC x1b
+VCP DC SNC x00`;
+
+test('parseGetvcpLines maps each VCP code to its parsed value', () => {
+    const m = parseGetvcpLines(MULTI);
+    assertDeepEqual(m.get(0x10), { type: 'C', current: 100, max: 100 });
+    assertDeepEqual(m.get(0x12), { type: 'C', current: 75, max: 100 });
+    assertEqual(m.get(0x14).value, 0x05);
+    assertEqual(m.get(0x60).value, 0x1b);
+    assertEqual(m.get(0xDC).value, 0x00);
+});
+
+test('parseGetvcpLines skips ERR/garbage lines', () => {
+    const m = parseGetvcpLines('VCP 10 C 40 100\nVCP 12 ERR\ngarbage\n');
+    assertEqual(m.get(0x10).current, 40);
+    assertEqual(m.has(0x12), false);
+});
+
 test('parseGetvcp parses continuous value', () => {
     assertDeepEqual(parseGetvcp('VCP 10 C 100 100'), { type: 'C', current: 100, max: 100 });
 });
@@ -73,6 +95,7 @@ test('parseGetvcp returns null on garbage', () => {
     assertEqual(parseGetvcp('DDC communication failed'), null);
 });
 
+import GLib from 'gi://GLib';
 import { Ddcutil, DdcError } from '../ddcutil.js';
 import { VCP } from '../monitor.js';
 
@@ -137,7 +160,7 @@ test('calls are serialized (one in flight at a time)', async () => {
         active++;
         maxActive = Math.max(maxActive, active);
         return new Promise(resolve => {
-            imports.gi.GLib.idle_add(imports.gi.GLib.PRIORITY_DEFAULT, () => {
+            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
                 active--;
                 resolve({ stdout: 'Display 1\n   I2C bus:          /dev/i2c-6\n   Monitor:          DEL:x:y\n', stderr: '', status: 0 });
                 return false;
@@ -147,4 +170,52 @@ test('calls are serialized (one in flight at a time)', async () => {
     const d = new Ddcutil(spawn);
     await Promise.all([d.detect(), d.detect(), d.detect()]);
     assertEqual(maxActive, 1, 'never more than one spawn concurrently');
+});
+
+const DETECT_OK = { stdout: 'Display 1\n   I2C bus:          /dev/i2c-6\n   Monitor:          DEL:x:y\n', stderr: '', status: 0 };
+
+test('getAll issues a single getvcp spawn and returns all values', async () => {
+    const spawn = makeFakeSpawn({
+        detect: DETECT_OK,
+        getvcp: { stdout: 'VCP 10 C 40 100\nVCP 12 C 60 100\nVCP 14 SNC x08\nVCP 60 SNC x11\nVCP DC SNC x03\n', stderr: '', status: 0 },
+    });
+    const d = new Ddcutil(spawn);
+    await d.detect();
+    const before = spawn.calls.length;
+    const all = await d.getAll();
+    assertDeepEqual(all, { brightness: 40, contrast: 60, input: 0x11, preset: 0x08, mode: 0x03 });
+    assertEqual(spawn.calls.length - before, 1, 'getAll spawns exactly once');
+});
+
+test('getAll returns null for VCP codes missing from the reply (keep last-known upstream)', async () => {
+    const spawn = makeFakeSpawn({
+        detect: DETECT_OK,
+        getvcp: { stdout: 'VCP 10 C 40 100\nVCP 60 SNC x0f\n', stderr: '', status: 0 },
+    });
+    const d = new Ddcutil(spawn);
+    await d.detect();
+    const all = await d.getAll();
+    assertEqual(all.brightness, 40);
+    assertEqual(all.input, 0x0f);
+    assertEqual(all.contrast, null);
+    assertEqual(all.preset, null);
+    assertEqual(all.mode, null);
+});
+
+test('getAll throws COMM_FAILED when no VCP lines parse', async () => {
+    const spawn = makeFakeSpawn({
+        detect: DETECT_OK,
+        getvcp: { stdout: '', stderr: 'DDC communication failed', status: 1 },
+    });
+    const d = new Ddcutil(spawn);
+    await d.detect();
+    let code = null;
+    try { await d.getAll(); } catch (e) { code = e.code; }
+    assertEqual(code, 'COMM_FAILED');
+});
+
+test('cancel() is safe to call', () => {
+    const d = new Ddcutil(makeFakeSpawn({}));
+    d.cancel();
+    assertEqual(typeof d.cancel, 'function');
 });

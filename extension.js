@@ -15,6 +15,30 @@ import {
     labelFor, createModel,
 } from './monitor.js';
 
+const ERROR_TEXT = {
+    NO_DDCUTIL: 'ddcutil not found — install it.',
+    NO_MONITOR: 'No DDC/CI monitor detected.',
+    COMM_FAILED: 'Monitor not responding (check DDC/CI in OSD).',
+};
+
+// The pick-one control groups. Rendered inline (with a header separator) when
+// `submenu` is absent, or inside a submenu when it's set. Drives both menu
+// construction and active-marking, so adding a control is a one-line change.
+const CONTROL_GROUPS = [
+    { key: 'input', vcp: VCP.INPUT, header: 'Input',
+      codes: [INPUT.DP1, INPUT.HDMI1, INPUT.USBC], labels: INPUT_LABELS },
+    { key: 'preset', vcp: VCP.PRESET, submenu: 'Color preset',
+      codes: [PRESET.K6500, PRESET.K9300, PRESET.USER1, PRESET.USER2], labels: PRESET_LABELS },
+    { key: 'mode', vcp: VCP.MODE, submenu: 'Display mode',
+      codes: [MODE.STANDARD, MODE.MOVIE, MODE.GAMES], labels: MODE_LABELS },
+];
+
+// Debounce for scroll/keyboard slider changes before writing to the monitor.
+const SLIDER_APPLY_MS = 300;
+
+const GROUP_INPUT = CONTROL_GROUPS[0];
+const GROUP_SUBMENUS = CONTROL_GROUPS.filter(g => g.submenu);
+
 const Indicator = GObject.registerClass(
 class Indicator extends PanelMenu.Button {
     _init(ddc) {
@@ -23,7 +47,11 @@ class Indicator extends PanelMenu.Button {
         this._model = createModel();
         this._powerConfirm = false;
         this._powerTimeoutId = 0;
-        this._scrollApplyId = 0;
+        this._destroyed = false;
+        this._refreshing = false;
+        this._suppressSliderApply = false;
+        this._sliderApplyIds = new Map();
+        this._groupItems = {};
 
         this.add_child(new St.Icon({
             icon_name: 'video-display-symbolic',
@@ -58,45 +86,19 @@ class Indicator extends PanelMenu.Button {
             return;
         }
 
-        // --- Input source ---
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Input'));
-        this._inputItems = new Map();
-        for (const code of [INPUT.DP1, INPUT.HDMI1, INPUT.USBC]) {
-            const item = new PopupMenu.PopupMenuItem(labelFor(INPUT_LABELS, code));
-            item.connect('activate', () => this._set(VCP.INPUT, code, 'input'));
-            this._inputItems.set(code, item);
-            this.menu.addMenuItem(item);
-        }
+        // --- Input source (inline) ---
+        this._groupItems = {};
+        this._addControlGroup(GROUP_INPUT);
 
-        // --- Brightness slider ---
+        // --- Brightness / Contrast sliders ---
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Brightness'));
         this._brightnessSlider = this._addSlider(VCP.BRIGHTNESS);
-
-        // --- Contrast slider ---
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem('Contrast'));
         this._contrastSlider = this._addSlider(VCP.CONTRAST);
 
-        // --- Color preset submenu ---
-        const presetMenu = new PopupMenu.PopupSubMenuMenuItem('Color preset');
-        this._presetItems = new Map();
-        for (const code of [PRESET.K6500, PRESET.K9300, PRESET.USER1, PRESET.USER2]) {
-            const item = new PopupMenu.PopupMenuItem(labelFor(PRESET_LABELS, code));
-            item.connect('activate', () => this._set(VCP.PRESET, code, 'preset'));
-            this._presetItems.set(code, item);
-            presetMenu.menu.addMenuItem(item);
-        }
-        this.menu.addMenuItem(presetMenu);
-
-        // --- Display mode submenu ---
-        const modeMenu = new PopupMenu.PopupSubMenuMenuItem('Display mode');
-        this._modeItems = new Map();
-        for (const code of [MODE.STANDARD, MODE.MOVIE, MODE.GAMES]) {
-            const item = new PopupMenu.PopupMenuItem(labelFor(MODE_LABELS, code));
-            item.connect('activate', () => this._set(VCP.MODE, code, 'mode'));
-            this._modeItems.set(code, item);
-            modeMenu.menu.addMenuItem(item);
-        }
-        this.menu.addMenuItem(modeMenu);
+        // --- Color preset / Display mode (submenus) ---
+        for (const group of GROUP_SUBMENUS)
+            this._addControlGroup(group);
 
         // --- Power off (two-step confirm) ---
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -110,24 +112,59 @@ class Indicator extends PanelMenu.Button {
         this.menu.addMenuItem(refresh);
     }
 
+    // Build one pick-one control group (input / preset / mode) from CONTROL_GROUPS.
+    _addControlGroup(group) {
+        let container;
+        if (group.submenu) {
+            const sub = new PopupMenu.PopupSubMenuMenuItem(group.submenu);
+            this.menu.addMenuItem(sub);
+            container = sub.menu;
+        } else {
+            this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem(group.header));
+            container = this.menu;
+        }
+        const items = new Map();
+        for (const code of group.codes) {
+            const item = new PopupMenu.PopupMenuItem(labelFor(group.labels, code));
+            item.connect('activate', () => this._set(group.vcp, code, group.key));
+            items.set(code, item);
+            container.addMenuItem(item);
+        }
+        this._groupItems[group.key] = items;
+    }
+
     _addSlider(code) {
         const item = new PopupMenu.PopupBaseMenuItem({ activate: false });
         const slider = new Slider.Slider(0);
-        // Apply only when the drag interaction settles.
-        slider.connect('drag-end', () => this._applySlider(code, slider));
-        // Apply after scroll updates the value; defer to idle so slider.value is current.
-        slider.connect('scroll-event', () => {
-            if (this._scrollApplyId)
+        // Pointer drag: apply once, when the drag settles.
+        slider.connect('drag-begin', () => { slider._dmcDragging = true; });
+        slider.connect('drag-end', () => {
+            slider._dmcDragging = false;
+            this._applySlider(code, slider);
+        });
+        // Scroll and keyboard change the value without a drag; debounce so a run
+        // of steps collapses into a single write, and ignore our own _render()
+        // writes (guarded by _suppressSliderApply) to avoid echoing them back.
+        slider.connect('notify::value', () => {
+            if (slider._dmcDragging || this._suppressSliderApply)
                 return;
-            this._scrollApplyId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-                this._scrollApplyId = 0;
-                this._applySlider(code, slider);
-                return GLib.SOURCE_REMOVE;
-            });
+            this._scheduleSliderApply(code, slider);
         });
         item.add_child(slider);
         this.menu.addMenuItem(item);
         return slider;
+    }
+
+    _scheduleSliderApply(code, slider) {
+        const existing = this._sliderApplyIds.get(code);
+        if (existing)
+            GLib.Source.remove(existing);
+        const id = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SLIDER_APPLY_MS, () => {
+            this._sliderApplyIds.delete(code);
+            this._applySlider(code, slider);
+            return GLib.SOURCE_REMOVE;
+        });
+        this._sliderApplyIds.set(code, id);
     }
 
     _applySlider(code, slider) {
@@ -136,17 +173,21 @@ class Indicator extends PanelMenu.Button {
     }
 
     _errorText() {
-        const map = {
-            NO_DDCUTIL: 'ddcutil not found — install it.',
-            NO_MONITOR: 'No DDC/CI monitor detected.',
-            COMM_FAILED: 'Monitor not responding (check DDC/CI in OSD).',
-        };
-        return map[this._model.error] ?? 'Monitor unavailable.';
+        return ERROR_TEXT[this._model.error] ?? 'Monitor unavailable.';
+    }
+
+    // Move the model into the unavailable/error state and rebuild the menu.
+    _fail(e) {
+        this._model.available = false;
+        this._model.error = e.code ?? 'UNKNOWN';
+        this._buildMenu();
     }
 
     async _detectThenRefresh() {
         try {
             const info = await this._ddc.detect();
+            if (this._destroyed)
+                return;
             this._model.available = true;
             this._model.error = null;
             this._model.bus = info.bus;
@@ -154,34 +195,45 @@ class Indicator extends PanelMenu.Button {
             this._buildMenu();
             await this._refresh();
         } catch (e) {
-            this._model.available = false;
-            this._model.error = e.code ?? 'UNKNOWN';
-            this._buildMenu();
+            if (!this._destroyed)
+                this._fail(e);
         }
     }
 
     async _refresh() {
-        if (!this._model.available)
+        if (!this._model.available || this._refreshing)
             return;
+        this._refreshing = true;
         try {
             const all = await this._ddc.getAll();
-            Object.assign(this._model, all);
+            if (this._destroyed)
+                return;
+            // Keep last-known-good for any field the reply didn't include (null).
+            for (const [key, value] of Object.entries(all)) {
+                if (value !== null)
+                    this._model[key] = value;
+            }
             this._render();
         } catch (e) {
-            this._model.available = false;
-            this._model.error = e.code ?? 'UNKNOWN';
-            this._buildMenu();
+            if (!this._destroyed)
+                this._fail(e);
+        } finally {
+            this._refreshing = false;
         }
     }
 
     _render() {
-        if (this._brightnessSlider && this._model.brightness !== null)
-            this._brightnessSlider.value = this._model.brightness / 100;
-        if (this._contrastSlider && this._model.contrast !== null)
-            this._contrastSlider.value = this._model.contrast / 100;
-        this._markActive(this._inputItems, this._model.input);
-        this._markActive(this._presetItems, this._model.preset);
-        this._markActive(this._modeItems, this._model.mode);
+        this._suppressSliderApply = true;
+        try {
+            if (this._brightnessSlider && this._model.brightness !== null)
+                this._brightnessSlider.value = this._model.brightness / 100;
+            if (this._contrastSlider && this._model.contrast !== null)
+                this._contrastSlider.value = this._model.contrast / 100;
+        } finally {
+            this._suppressSliderApply = false;
+        }
+        for (const group of CONTROL_GROUPS)
+            this._markActive(this._groupItems[group.key], this._model[group.key]);
     }
 
     _markActive(items, activeCode) {
@@ -197,10 +249,13 @@ class Indicator extends PanelMenu.Button {
     async _set(code, value, key) {
         try {
             await this._ddc.setVcp(code, value);
+            if (this._destroyed)
+                return;
             this._model[key] = value;
             this._render();
         } catch (e) {
-            Main.notify('Dell Monitor Control', 'Failed to apply change.');
+            if (!this._destroyed)
+                Main.notify('Dell Monitor Control', 'Failed to apply change.');
         }
     }
 
@@ -229,14 +284,14 @@ class Indicator extends PanelMenu.Button {
     }
 
     destroy() {
+        this._destroyed = true;
         if (this._powerTimeoutId) {
             GLib.Source.remove(this._powerTimeoutId);
             this._powerTimeoutId = 0;
         }
-        if (this._scrollApplyId) {
-            GLib.Source.remove(this._scrollApplyId);
-            this._scrollApplyId = 0;
-        }
+        for (const id of this._sliderApplyIds.values())
+            GLib.Source.remove(id);
+        this._sliderApplyIds.clear();
         super.destroy();
     }
 });
@@ -249,6 +304,9 @@ export default class DellMonitorControlExtension extends Extension {
     }
 
     disable() {
+        // Abort any in-flight ddcutil call so its callback can't fire on the
+        // destroyed indicator, then tear the indicator down.
+        this._ddc?.cancel();
         this._indicator?.destroy();
         this._indicator = null;
         this._ddc = null;
