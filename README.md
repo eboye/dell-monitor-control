@@ -103,6 +103,27 @@ Click the display icon in the top bar. Sliders apply on release; input/preset/
 mode changes apply immediately and mark the active choice with a dot. Power off
 requires a confirmation click.
 
+### Quick Settings instead of the top bar
+
+The same controls can live in a Quick Settings tile rather than taking up their
+own slot in the top bar:
+
+```bash
+gnome-extensions prefs dell-monitor-control@eboye.github
+```
+
+Turn on **Show in Quick Settings**. The change applies immediately — no shell
+reload. The tile is labelled with the detected monitor model; clicking either
+the tile or its arrow opens the same menu (the tile deliberately does not
+toggle display power, so a stray click can't blank your screen).
+
+Equivalent from the command line:
+
+```bash
+gsettings --schemadir ~/.local/share/gnome-shell/extensions/dell-monitor-control@eboye.github/schemas \
+    set org.gnome.shell.extensions.dell-monitor-control use-quick-settings true
+```
+
 > **USB-C caveat:** switching to an input with no active source can leave the
 > screen on "No signal". If DDC stops responding over the old cable, use the
 > monitor's physical OSD button to switch back.
@@ -115,7 +136,14 @@ Pure logic (parsers, model, service queue) is unit-tested without the shell:
 gjs -m tests/run.js
 ```
 
-The UI (`extension.js`) is verified in a live GNOME session.
+The UI (`extension.js` for placement, `menu.js` for the controls) is verified in
+a live GNOME session.
+
+A linked clone needs its schema compiled once before preferences will open:
+
+```bash
+glib-compile-schemas schemas
+```
 
 Build a distributable zip locally with `scripts/pack.sh`. Pushing a `v*` tag
 (e.g. `git tag v1 && git push origin v1`) triggers the GitHub Actions workflow

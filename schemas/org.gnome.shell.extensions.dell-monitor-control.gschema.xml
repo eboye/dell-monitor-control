@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.dell-monitor-control"
+          path="/org/gnome/shell/extensions/dell-monitor-control/">
+    <key name="use-quick-settings" type="b">
+      <default>false</default>
+      <summary>Show the controls in Quick Settings</summary>
+      <description>
+        When true, the controls live in a Quick Settings tile instead of a
+        separate icon in the top bar.
+      </description>
+    </key>
+  </schema>
+</schemalist>

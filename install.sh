@@ -16,7 +16,7 @@ set -euo pipefail
 UUID="dell-monitor-control@eboye.github"
 REPO="https://github.com/eboye/dell-monitor-control.git"
 DEST="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$UUID"
-RUNTIME_FILES=(metadata.json extension.js ddcutil.js monitor.js stylesheet.css README.md)
+RUNTIME_FILES=(metadata.json extension.js prefs.js ddcutil.js monitor.js menu.js stylesheet.css README.md)
 
 c_reset='\033[0m'; c_red='\033[31m'; c_yellow='\033[33m'; c_green='\033[32m'; c_dim='\033[2m'
 info() { printf '%b==>%b %s\n' "$c_green" "$c_reset" "$*"; }
@@ -111,7 +111,18 @@ else
     for f in "${RUNTIME_FILES[@]}"; do
         [ -f "$src/$f" ] && cp -f "$src/$f" "$DEST/$f"
     done
+    mkdir -p "$DEST/schemas"
+    cp -f "$src"/schemas/*.gschema.xml "$DEST/schemas/"
     info "Installed to $DEST"
+fi
+
+# The shell reads gschemas.compiled, not the XML, so compile in place. A dev
+# symlink points at the clone, which needs the same treatment.
+if command -v glib-compile-schemas >/dev/null 2>&1; then
+    glib-compile-schemas "$DEST/schemas" 2>/dev/null || warn "Could not compile GSettings schema; preferences will not open."
+else
+    warn "glib-compile-schemas not found; preferences will not open until the schema is compiled."
+    note "It ships with glib2 — install your distro's glib2 (or glib2-devel) package, then re-run."
 fi
 
 # --- Enable + report. --------------------------------------------------------

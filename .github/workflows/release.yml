@@ -16,6 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # pack.sh compiles the GSettings schema into the zip.
+      - name: Install glib-compile-schemas
+        run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev-bin
+
       - name: Build extension zip
         run: |
           bash scripts/pack.sh "dell-monitor-control@eboye.github.shell-extension.zip"

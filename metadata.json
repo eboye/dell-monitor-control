@@ -1,7 +1,8 @@
 {
   "uuid": "dell-monitor-control@eboye.github",
   "name": "Dell Monitor Control",
-  "description": "Control a DDC/CI Dell monitor (input source, brightness, contrast, color preset, display mode, power) from the top bar via ddcutil.",
+  "description": "Control a DDC/CI Dell monitor (input source, brightness, contrast, color preset, display mode, power) from the top bar or Quick Settings via ddcutil.",
+  "settings-schema": "org.gnome.shell.extensions.dell-monitor-control",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "version": 3,
   "url": "https://github.com/eboye/dell-monitor-control"
