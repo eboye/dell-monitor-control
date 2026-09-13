@@ -96,21 +96,50 @@ test('parseGetvcp returns null on garbage', () => {
 });
 
 import GLib from 'gi://GLib';
-import { Ddcutil, DdcError } from '../ddcutil.js';
+import { Ddcutil, DdcError, CALL_TIMEOUT_MS, DETECT_TIMEOUT_MS } from '../ddcutil.js';
 import { VCP } from '../monitor.js';
 
-// Fake spawn: records argv, returns canned terse output per subcommand.
+// Fake spawn: records argv and the watchdog it was handed, returns canned terse
+// output per subcommand.
 function makeFakeSpawn(responses) {
     const calls = [];
-    const spawn = (argv) => {
+    const timeouts = [];
+    const spawn = (argv, _cancellable, timeoutMs) => {
         calls.push(argv);
+        timeouts.push(timeoutMs);
         const key = argv.find(a => a === 'detect' || a === 'getvcp' || a === 'setvcp');
         const r = responses[key] ?? { stdout: '', stderr: '', status: 0 };
         return Promise.resolve(r);
     };
     spawn.calls = calls;
+    spawn.timeouts = timeouts;
     return spawn;
 }
+
+// Regression (ddcutil 3.0): `detect` probes every i2c bus and now takes several
+// seconds — ~5.2s on a 9-bus machine — while a single getvcp still costs ~70ms.
+// The old uniform 5s watchdog force-killed every detect, so the extension never
+// learned its bus and reported COMM_FAILED forever. A scan needs a scan-sized
+// watchdog; per-VCP calls must keep the short one so a wedged bus still fails fast.
+test('detect gets a scan-sized watchdog, VCP calls keep the short one', async () => {
+    const spawn = makeFakeSpawn({
+        detect: { stdout: 'Display 1\n   I2C bus:          /dev/i2c-6\n   Monitor:          DEL:DELL P3421W:DHDJJ53\n', stderr: '', status: 0 },
+        getvcp: { stdout: 'VCP 10 C 60 100\n', stderr: '', status: 0 },
+    });
+    const d = new Ddcutil(spawn);
+
+    await d.detect();
+    assertEqual(spawn.timeouts[0], DETECT_TIMEOUT_MS, 'detect watchdog');
+
+    await d.getAll();
+    assertEqual(spawn.timeouts[1], CALL_TIMEOUT_MS, 'getvcp watchdog');
+
+    await d.setVcp(VCP.BRIGHTNESS, 50);
+    assertEqual(spawn.timeouts[2], CALL_TIMEOUT_MS, 'setvcp watchdog');
+
+    if (!(DETECT_TIMEOUT_MS > 5200))
+        throw new Error(`detect watchdog ${DETECT_TIMEOUT_MS}ms does not clear a measured ~5.2s scan`);
+});
 
 test('detect pins bus and returns model', async () => {
     const spawn = makeFakeSpawn({

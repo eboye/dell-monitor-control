@@ -18,7 +18,15 @@ const hex = (code) => code.toString(16).toUpperCase();
 
 // Kill a ddcutil call that hasn't returned in this long — DDC/CI over a wedged
 // i2c bus can hang indefinitely, which would otherwise deadlock the serial queue.
-const CALL_TIMEOUT_MS = 5000;
+// Sized for a single VCP read/write, which costs tens of milliseconds.
+export const CALL_TIMEOUT_MS = 5000;
+
+// `detect` is a different animal: it probes every i2c bus on the system, and
+// ddcutil 3.0 made that markedly slower — ~5.2s on a 9-bus machine, against
+// ~70ms for a getvcp. It can't be narrowed (`detect --bus N` is rejected: "detect
+// does not support explicit display option"), and it only runs at startup and on
+// Retry, so give it a watchdog sized for a scan rather than for a read.
+export const DETECT_TIMEOUT_MS = 30000;
 
 // --- Pure parsers -----------------------------------------------------------
 
@@ -111,9 +119,9 @@ export class DdcError extends Error {
 }
 
 // Real async runner. Resolves { stdout, stderr, status }. A watchdog force-kills
-// a call that exceeds CALL_TIMEOUT_MS so a hung i2c bus can't wedge the queue;
+// a call that exceeds timeoutMs so a hung i2c bus can't wedge the queue;
 // the cancellable lets disable() abort an in-flight call immediately.
-export function spawnDdcutil(argv, cancellable = null) {
+export function spawnDdcutil(argv, cancellable = null, timeoutMs = CALL_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
         let proc;
         try {
@@ -127,7 +135,7 @@ export function spawnDdcutil(argv, cancellable = null) {
         }
 
         let timedOut = false;
-        let timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, CALL_TIMEOUT_MS, () => {
+        let timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, timeoutMs, () => {
             timedOut = true;
             timeoutId = 0;
             proc.force_exit();
@@ -189,7 +197,8 @@ export class Ddcutil {
 
     async detect() {
         return this._enqueue(async () => {
-            const { stdout } = await this._spawn(['detect', '--terse'], this._cancellable);
+            const { stdout } = await this._spawn(
+                ['detect', '--terse'], this._cancellable, DETECT_TIMEOUT_MS);
             const info = parseDetect(stdout);
             if (!info)
                 throw new DdcError('NO_MONITOR');
@@ -201,7 +210,7 @@ export class Ddcutil {
     async getVcp(code) {
         return this._enqueue(async () => {
             const { stdout, status } = await this._spawn(
-                [...this._busArgs(), 'getvcp', hex(code), '--terse'], this._cancellable);
+                [...this._busArgs(), 'getvcp', hex(code), '--terse'], this._cancellable, CALL_TIMEOUT_MS);
             if (status !== 0)
                 throw new DdcError('COMM_FAILED');
             const parsed = parseGetvcp(stdout);
@@ -214,7 +223,7 @@ export class Ddcutil {
     async setVcp(code, value) {
         return this._enqueue(async () => {
             const { status } = await this._spawn(
-                [...this._busArgs(), 'setvcp', '--noverify', hex(code), String(value)], this._cancellable);
+                [...this._busArgs(), 'setvcp', '--noverify', hex(code), String(value)], this._cancellable, CALL_TIMEOUT_MS);
             if (status !== 0)
                 throw new DdcError('COMM_FAILED');
         });
@@ -228,7 +237,7 @@ export class Ddcutil {
         return this._enqueue(async () => {
             const codes = ALL_VCP.map(v => hex(v.code));
             const { stdout } = await this._spawn(
-                [...this._busArgs(), 'getvcp', ...codes, '--terse'], this._cancellable);
+                [...this._busArgs(), 'getvcp', ...codes, '--terse'], this._cancellable, CALL_TIMEOUT_MS);
             const parsed = parseGetvcpLines(stdout);
             if (parsed.size === 0)
                 throw new DdcError('COMM_FAILED');
