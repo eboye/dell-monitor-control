@@ -117,6 +117,9 @@ reload. The tile is labelled with the detected monitor model; clicking either
 the tile or its arrow opens the same menu (the tile deliberately does not
 toggle display power, so a stray click can't blank your screen).
 
+Either way, the controls stay available on the lock screen (Super+L), so you
+can switch input or dim the panel without unlocking.
+
 Equivalent from the command line:
 
 ```bash

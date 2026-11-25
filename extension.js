@@ -95,6 +95,12 @@ export default class DellMonitorControlExtension extends Extension {
         this._build();
     }
 
+    // The extension declares the unlock-dialog session mode so the monitor
+    // controls stay reachable from the lock screen — e.g. switching input or
+    // dimming the panel while away. Nothing it shows is user data (only the
+    // monitor model), and every control duplicates the monitor's own physical
+    // buttons. disable() therefore runs only when the extension is actually
+    // turned off, not on lock.
     disable() {
         if (this._settingsId) {
             this._settings.disconnect(this._settingsId);
